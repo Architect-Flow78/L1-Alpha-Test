@@ -3,57 +3,60 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ТВОЙ ИНВАРИАНТ (ЖЕСТКАЯ ДЕТЕКЦИЯ)
-def detect_nodes(series):
-    # Скорость (дифференциал)
-    d = series.diff()
-    # Узел — точка, где скорость меняет знак (разворот)
-    return (d.shift(1) * d < 0).fillna(False)
+# 1. ТВОЙ ИНВАРИАНТ С ЧУВСТВИТЕЛЬНОСТЬЮ
+def detect_nodes(series, window):
+    # Убираем None и переводим в числа
+    s = pd.to_numeric(series, errors='coerce').dropna().reset_index(drop=True)
+    if len(s) < window: return s, pd.Series([False]*len(s))
+    
+    # Сглаживаем, чтобы не считать "шум" за узлы
+    smooth = s.rolling(window=window, center=True).mean()
+    d = smooth.diff()
+    nodes = (d.shift(1) * d < 0).fillna(False)
+    return s, nodes
 
-st.title("🌀 L0-ENGINE: ПРЯМОЙ СКАНЕР")
+st.set_page_config(page_title="L0-ENGINE: FINAL", layout="wide")
+st.title("🌀 ДВИГАТЕЛЬ L0: РЕАЛЬНЫЙ ПОТОК")
 
-file = st.file_uploader("ЗАГРУЗИ СВОЙ ФАЙЛ (ЛЮБОЙ ФОРМАТ)")
+file = st.file_uploader("ЗАГРУЗИ CSV/TXT ИЗ NASA")
 
 if file:
     content = file.getvalue().decode('utf-8')
-    lines = content.splitlines()
-    
-    all_data = []
-    for line in lines:
-        # Разбиваем строку по запятым или пробелам и ищем числа
-        parts = line.replace(',', ' ').split()
-        numeric_parts = []
-        for p in parts:
-            try:
-                numeric_parts.append(float(p))
-            except:
-                continue
-        if len(numeric_parts) > 0:
-            all_data.append(numeric_parts)
-    
-    if all_data:
-        df = pd.DataFrame(all_data)
-        st.write("Обнаружены числовые потоки (колонки):")
+    # Ищем блок между $$SOE и $$EOE
+    if "$$SOE" in content:
+        data_block = content.split("$$SOE")[1].split("$$EOE")[0]
+        # Читаем фиксированно: в NASA данные обычно через запятую
+        lines = [l.strip().split(',') for l in data_block.strip().split('\n') if len(l) > 10]
+        df = pd.DataFrame(lines)
+    else:
+        # Если маркеров нет, берем всё что есть
+        lines = [l.strip().split(',') for l in content.splitlines() if len(l) > 1]
+        df = pd.DataFrame(lines)
+
+    if not df.empty:
+        st.write("ТАБЛИЦА ВОССТАНОВЛЕНА:")
         st.dataframe(df.head(5))
         
-        # Выбираем колонку, где самые большие числа (обычно это дистанция или координаты)
-        target = st.selectbox("ВЫБЕРИ КОЛОНКУ С ДАННЫМИ", df.columns)
+        # В NASA за 2026 год (как на скрине) координаты обычно в колонках 2, 3, 4
+        target_idx = st.selectbox("ВЫБЕРИ ПОТОК (Числа)", df.columns, index=min(2, len(df.columns)-1))
         
-        if st.button("▶ ИСКАТЬ УЗЛЫ В ПОТОКЕ"):
-            series = df[target]
-            nodes = detect_nodes(series)
+        # Слайдер фильтрации шума
+        win = st.slider("МАСШТАБ (Сглаживание)", 1, 100, 24)
+        
+        if st.button("▶ ВЫЯВИТЬ СТРУКТУРУ"):
+            clean_series, nodes = detect_nodes(df[target_idx], win)
             
-            st.success(f"НАЙДЕНО УЗЛОВ: {nodes.sum()}")
+            st.success(f"НАСТОЯЩИХ УЗЛОВ ВЫЯВЛЕНО: {nodes.sum()}")
             
             fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(series.index, series.values, color='#00ffcc', label="Данные")
+            ax.plot(clean_series.index, clean_series.values, color='#00ffcc', label="Траектория")
             
             if nodes.any():
-                ax.scatter(series.index[nodes], series.values[nodes], 
-                           color='red', s=40, label="УЗЕЛ")
+                ax.scatter(clean_series.index[nodes], clean_series.values[nodes], 
+                           color='red', s=40, label="УЗЕЛ", zorder=5)
             
             ax.grid(True, alpha=0.1)
             ax.legend()
             st.pyplot(fig)
     else:
-        st.error("В файле вообще не найдено чисел. Проверь файл!")
+        st.error("Файл пустой или не распознан.")
