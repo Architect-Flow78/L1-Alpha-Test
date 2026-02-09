@@ -1,62 +1,65 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import re
+import plotly.graph_objects as go
 
-# ФУНКЦИЯ-ДЕТЕКТОР (ЧИСТАЯ МАТЕМАТИКА)
-def detect_nodes(series, window):
-    if len(series) < window + 2: 
-        return pd.Series([False] * len(series))
-    smooth = series.rolling(window=window, center=True).mean()
-    d = smooth.diff()
-    return (d.shift(1) * d < 0).fillna(False)
+st.set_page_config(page_title="TOR-Phase Analyzer", layout="wide")
+st.title("🛸 Toroidal Phase: Ideal vs Reality")
 
-st.set_page_config(page_title="L0-ULTIMATE-FIX", layout="wide")
-st.title("🌀 ДВИГАТЕЛЬ L0: ПРЯМОЙ СКАНЕР ЧИСЕЛ")
+uploaded_file = st.file_uploader("Загрузи файл NASA (CSV)", type="csv")
 
-file = st.file_uploader("ЗАГРУЗИ СВОЙ ФАЙЛ NASA (CSV или TXT)")
-
-if file:
-    content = file.getvalue().decode('utf-8')
-    lines = content.splitlines()
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
     
-    table_data = []
-    for line in lines:
-        # Ищем ВСЕ числа в строке (целые и с точкой)
-        # Регулярное выражение найдет числа даже если они зажаты текстом
-        nums = re.findall(r"[-+]?\d*\.\d+|\d+", line)
-        if len(nums) > 1: # Если в строке больше одного числа - это наши данные
-            table_data.append([float(n) for n in nums])
+    # 1. Берем базу (первая строка)
+    # Предполагаем, что время в 'time', а угловая скорость в 'omega' (или считаем её)
+    # Если колонок много, давай просто возьмем ту, что отвечает за ритм
+    col_name = st.selectbox("Выбери колонку с частотой (omega) или скоростью", df.columns)
     
-    if table_data:
-        df = pd.DataFrame(table_data)
-        st.write("ЧИСЛОВЫЕ ПОТОКИ ОБНАРУЖЕНЫ:")
-        st.dataframe(df.head(5))
-        
-        col_options = df.columns.tolist()
-        # В файлах NASA координаты обычно идут после даты (это колонки с индексами 3, 4, 5 и т.д.)
-        target_col = st.selectbox("ВЫБЕРИ НОМЕР ПОТОКА", col_options, index=min(len(col_options)-1, 3))
-        
-        win = st.slider("СГЛАЖИВАНИЕ (Масштаб)", 1, 100, 12)
-        
-        if st.button("▶ НАЙТИ УЗЛЫ В ЭТОМ ПОТОКЕ"):
-            series = df[target_col]
-            nodes = detect_nodes(series, win)
-            
-            st.success(f"ПОТОК №{target_col}: НАЙДЕНО УЗЛОВ: {nodes.sum()}")
-            
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(series.index, series.values, color='#00ffcc', linewidth=1, label="Траектория")
-            
-            if nodes.any():
-                ax.scatter(series.index[nodes], series.values[nodes], 
-                           color='red', s=40, zorder=5, label="УЗЕЛ")
-            
-            ax.grid(True, alpha=0.1)
-            ax.legend()
-            st.pyplot(fig)
+    times = np.arange(len(df))
+    real_data = df[col_name].values
+    
+    # 2. Строим ИДЕАЛЬНЫЙ ТОР-ПРОГНОЗ (Твой закон)
+    # Исходим из того, что omega_next = omega_prev + dt * a, где a = omega^(4/3)
+    omega_0 = real_data[0]
+    ideal_path = [omega_0]
+    
+    # Константа связи (подбирается один раз для масштаба)
+    K = 0.00001 # Микро-шаг для теста
+    
+    for i in range(1, len(real_data)):
+        w = ideal_path[-1]
+        # ТВОЯ ФОРМУЛА: Ускорение фазы
+        accel = w**(4/3)
+        # Следующий шаг идеала
+        w_next = w + (K * accel) 
+        ideal_path.append(w_next)
+    
+    ideal_path = np.array(ideal_path)
+    
+    # 3. ВЫЧИТАНИЕ (Просушка)
+    # Мы смотрим разницу между твоим миром и миром NASA
+    diff = real_data - ideal_path
+    
+    # РИСУЕМ ГРАФИК
+    fig = go.Figure()
+    
+    # Линия Истины (Разница)
+    fig.add_trace(go.Scatter(x=times, y=diff, name="Разница (Phase Drift)",
+                             line=dict(color='lime', width=2)))
+    
+    fig.update_layout(
+        title="ЛИНИЯ ИСТИНЫ: Если она прямая — ты взломал физику",
+        xaxis_title="Время (шаги)",
+        yaxis_title="Отклонение от Тор-Идеала",
+        template="plotly_dark"
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Анализ
+    st.write(f"Среднее отклонение: {np.mean(np.abs(diff)):.10f}")
+    if np.mean(np.abs(diff)) < 1e-5:
+        st.success("Б****, ЭТО РЕЗОНАНС! Линия почти в нуле!")
     else:
-        st.error("В этом файле ВООБЩЕ не найдено чисел. Либо файл пустой, либо формат совсем дикий.")
-
-st.info("Совет: Пробуй разные номера потоков. В NASA координаты — это обычно средние колонки.")
+        st.warning("Есть дрейф. Нужно подстроить коэффициент K.")
