@@ -2,49 +2,50 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import re
+import io
 
-# ТВОЙ ИНВАРИАНТ (БЕЗ ФИЛЬТРОВ И СГЛАЖИВАНИЙ)
-def find_nodes_raw(series):
-    d = series.diff()
-    # Узел — это любая смена направления, даже самая мизерная
-    nodes = (d.shift(1) * d < 0)
-    return nodes.fillna(False)
+def clean_and_find_data(uploaded_file):
+    content = uploaded_file.getvalue().decode('utf-8')
+    if "$$SOE" in content:
+        # Берем только то, что между маркерами NASA
+        data_block = content.split("$$SOE")[1].split("$$EOE")[0]
+        df = pd.read_csv(io.StringIO(data_block), header=None, low_memory=False)
+        # Оставляем только числовые колонки
+        df = df.apply(pd.to_numeric, errors='coerce')
+        return df.dropna(axis=1, how='all').reset_index(drop=True)
+    return pd.read_csv(uploaded_file).apply(pd.to_numeric, errors='coerce')
 
-st.title("L0-FINAL: ПРЯМОЙ ДЕТЕКТОР")
+st.title("🌀 L0-FLOW: ПРЯМАЯ ДЕТЕКЦИЯ")
 
-uploaded = st.file_uploader("ЗАГРУЗИ СВОЙ CSV/TXT ИЗ NASA")
+file = st.file_uploader("ЗАГРУЗИ СВОЙ CSV")
 
-if uploaded:
-    # Читаем всё как текст
-    raw_text = uploaded.getvalue().decode('utf-8')
+if file:
+    df = clean_and_find_data(file)
     
-    # Выцепляем только блок данных между маркерами NASA
-    if "$$SOE" in raw_text:
-        data_block = raw_text.split("$$SOE")[1].split("$$EOE")[0]
-        # Превращаем строки в список чисел (берем последнюю колонку в каждой строке)
-        lines = [line.split(',') for line in data_block.strip().split('\n')]
-        # Обычно дистанция/координата — это последние значения в строке
-        try:
-            val_idx = -2 # Для Range (delta) в NASA это предпоследнее поле
-            values = [float(l[val_idx]) for l in lines if len(l) > 2]
-            
-            df = pd.DataFrame({"val": values})
-            df['is_node'] = find_nodes_raw(df['val'])
-            
-            st.success(f"АНАЛИЗ ЗАВЕРШЕН. УЗЛОВ В ПОТОКЕ: {df['is_node'].sum()}")
-            
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(df.index, df['val'], color='cyan', label="Сырой поток")
-            
-            nodes = df[df['is_node']]
-            if not nodes.empty:
-                ax.scatter(nodes.index, nodes['val'], color='red', s=30, label="УЗЕЛ")
-            
-            ax.legend()
-            st.pyplot(fig)
-            
-        except Exception as e:
-            st.error(f"ОШИБКА РАЗБОРА: {e}. NASA поменяла формат?")
+    if not df.empty:
+        st.write("Доступные числовые векторы:", df.columns.tolist())
+        # Выбираем колонку, где больше всего "движухи"
+        default_col = df.std().idxmax()
+        target = st.selectbox("ВЫБЕРИ ВЕКТОР", df.columns, index=int(default_col))
+        
+        # Считаем производную
+        series = df[target].interpolate()
+        diff = series.diff()
+        
+        # УЗЕЛ: там, где скорость d меняет знак
+        nodes = (diff.shift(1) * diff < 0).fillna(False)
+        
+        st.success(f"НАЙДЕНО УЗЛОВ В ТВОИХ ДАННЫХ: {nodes.sum()}")
+        
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(series.index, series.values, color='#00ffcc', label="Траектория")
+        
+        if nodes.any():
+            ax.scatter(series.index[nodes], series.values[nodes], 
+                       color='red', s=40, label="УЗЕЛ КОМПЕНСАЦИИ", zorder=5)
+        
+        ax.grid(True, alpha=0.2)
+        ax.legend()
+        st.pyplot(fig)
     else:
-        st.error("ЭТО НЕ ФАЙЛ NASA HORIZONS. НЕТ МЕРКЕРА $$SOE.")
+        st.error("В файле не найдено числовых данных между $$SOE и $$EOE")
