@@ -2,50 +2,58 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import io
 
-def clean_and_find_data(uploaded_file):
-    content = uploaded_file.getvalue().decode('utf-8')
-    if "$$SOE" in content:
-        # Берем только то, что между маркерами NASA
-        data_block = content.split("$$SOE")[1].split("$$EOE")[0]
-        df = pd.read_csv(io.StringIO(data_block), header=None, low_memory=False)
-        # Оставляем только числовые колонки
-        df = df.apply(pd.to_numeric, errors='coerce')
-        return df.dropna(axis=1, how='all').reset_index(drop=True)
-    return pd.read_csv(uploaded_file).apply(pd.to_numeric, errors='coerce')
+# ТВОЙ ИНВАРИАНТ (ЖЕСТКАЯ ДЕТЕКЦИЯ)
+def detect_nodes(series):
+    # Скорость (дифференциал)
+    d = series.diff()
+    # Узел — точка, где скорость меняет знак (разворот)
+    return (d.shift(1) * d < 0).fillna(False)
 
-st.title("🌀 L0-FLOW: ПРЯМАЯ ДЕТЕКЦИЯ")
+st.title("🌀 L0-ENGINE: ПРЯМОЙ СКАНЕР")
 
-file = st.file_uploader("ЗАГРУЗИ СВОЙ CSV")
+file = st.file_uploader("ЗАГРУЗИ СВОЙ ФАЙЛ (ЛЮБОЙ ФОРМАТ)")
 
 if file:
-    df = clean_and_find_data(file)
+    content = file.getvalue().decode('utf-8')
+    lines = content.splitlines()
     
-    if not df.empty:
-        st.write("Доступные числовые векторы:", df.columns.tolist())
-        # Выбираем колонку, где больше всего "движухи"
-        default_col = df.std().idxmax()
-        target = st.selectbox("ВЫБЕРИ ВЕКТОР", df.columns, index=int(default_col))
+    all_data = []
+    for line in lines:
+        # Разбиваем строку по запятым или пробелам и ищем числа
+        parts = line.replace(',', ' ').split()
+        numeric_parts = []
+        for p in parts:
+            try:
+                numeric_parts.append(float(p))
+            except:
+                continue
+        if len(numeric_parts) > 0:
+            all_data.append(numeric_parts)
+    
+    if all_data:
+        df = pd.DataFrame(all_data)
+        st.write("Обнаружены числовые потоки (колонки):")
+        st.dataframe(df.head(5))
         
-        # Считаем производную
-        series = df[target].interpolate()
-        diff = series.diff()
+        # Выбираем колонку, где самые большие числа (обычно это дистанция или координаты)
+        target = st.selectbox("ВЫБЕРИ КОЛОНКУ С ДАННЫМИ", df.columns)
         
-        # УЗЕЛ: там, где скорость d меняет знак
-        nodes = (diff.shift(1) * diff < 0).fillna(False)
-        
-        st.success(f"НАЙДЕНО УЗЛОВ В ТВОИХ ДАННЫХ: {nodes.sum()}")
-        
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(series.index, series.values, color='#00ffcc', label="Траектория")
-        
-        if nodes.any():
-            ax.scatter(series.index[nodes], series.values[nodes], 
-                       color='red', s=40, label="УЗЕЛ КОМПЕНСАЦИИ", zorder=5)
-        
-        ax.grid(True, alpha=0.2)
-        ax.legend()
-        st.pyplot(fig)
+        if st.button("▶ ИСКАТЬ УЗЛЫ В ПОТОКЕ"):
+            series = df[target]
+            nodes = detect_nodes(series)
+            
+            st.success(f"НАЙДЕНО УЗЛОВ: {nodes.sum()}")
+            
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.plot(series.index, series.values, color='#00ffcc', label="Данные")
+            
+            if nodes.any():
+                ax.scatter(series.index[nodes], series.values[nodes], 
+                           color='red', s=40, label="УЗЕЛ")
+            
+            ax.grid(True, alpha=0.1)
+            ax.legend()
+            st.pyplot(fig)
     else:
-        st.error("В файле не найдено числовых данных между $$SOE и $$EOE")
+        st.error("В файле вообще не найдено чисел. Проверь файл!")
