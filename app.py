@@ -1,57 +1,49 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-import io
 
-# ТВОЯ МАТЕМАТИКА (ПОДСТРОЕННАЯ ПОД ЧАСОВЫЕ ДАННЫЕ)
+# --- ТВОЙ ОРИГИНАЛЬНЫЙ КОД (L1-Emergence) ---
 def compute_derivatives(df, col):
     df = df.copy()
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-    df = df.dropna(subset=[col])
-    
-    # Считаем производную не по 1 точке, а по тренду (чтобы убрать шум)
     df['d'] = df[col].diff()
+    df['dd'] = df['d'].diff()
     return df
 
-def find_nodes(df, window=5):
-    # Узел там, где скорость меняет знак, 
-    # но смотрим через среднее, чтобы поймать разворот на мелком масштабе
-    d_smooth = df['d'].rolling(window=window, center=True).mean()
-    return (d_smooth.shift(1) * d_smooth < 0).fillna(False)
+def find_nodes(df):
+    # Твой инвариант: узел там, где скорость меняет вектор
+    return (df['d'].shift(1) * df['d'] < 0).fillna(False)
 
-st.title("L0-FLOW: АНАЛИЗАТОР NASA (ЧАСОВОЙ)")
+st.title("🌀 ТЕСТ ГЕОМЕТРИИ: ТОР (L0-FLOW)")
 
-uploaded_file = st.file_uploader("ЗАГРУЗИ СВОЙ ЧАСОВОЙ CSV")
+# Генерируем движение по Тору (две частоты: вращение и обход)
+t = np.linspace(0, 10, 1000)
+# Координата X движения по поверхности тора
+# (R + r*cos(v)) * cos(u)
+x_torus = (3 + np.cos(5 * t)) * np.cos(t) 
 
-if uploaded_file:
-    content = uploaded_file.getvalue().decode('utf-8')
+df = pd.DataFrame({"time": t, "torus_x": x_torus})
+
+st.write("Сейчас мы запустим алгоритм на идеальной модели Тора.")
+
+if st.button("👁 ВЫЯВИТЬ УЗЛЫ ТОРЫ"):
+    df = compute_derivatives(df, "torus_x")
+    df['is_node'] = find_nodes(df)
     
-    if "$$SOE" in content:
-        data_part = content.split("$$SOE")[1].split("$$EOE")[0]
-        df_raw = pd.read_csv(io.StringIO(data_part), header=None)
-        
-        # NASA даёт много колонок. Координаты обычно в 2, 3, 4 (X, Y, Z)
-        # Если ты качал Range (дистанцию), это обычно колонка 4 или 5
-        df_raw.columns = [f"col_{i}" for i in range(len(df_raw.columns))]
-        
-        st.write("Данные NASA загружены. В почасовых файлах ищи колонку с цифрами:")
-        target_col = st.selectbox("ВЫБЕРИ КОЛОНКУ", df_raw.columns)
-        
-        # Ползунок чувствительности (важно для часовых данных!)
-        win = st.slider("Сглаживание (для почасовых данных)", 1, 50, 12)
-        
-        if st.button("ПРОГНАТЬ ПОЧАСОВЫЕ ДАННЫЕ"):
-            df = compute_derivatives(df_raw, target_col)
-            df['is_node'] = find_nodes(df, window=win)
-            
-            st.success(f"Найдено узлов: {df['is_node'].sum()}")
-            
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(df.index, df[target_col], color='cyan', label="Траектория")
-            
-            if df['is_node'].any():
-                ax.scatter(df.index[df['is_node']], df.loc[df['is_node'], target_col], 
-                           color='red', s=100, label="УЗЕЛ РАЗВОРОТА", zorder=5)
-            
-            ax.legend()
-            st.pyplot(fig)
+    nodes_count = df['is_node'].sum()
+    st.success(f"На геометрии Тора обнаружено узлов: {nodes_count}")
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(df['time'], df['torus_x'], color='white', alpha=0.3, label="Траектория Тора")
+    
+    # Рисуем узлы
+    if nodes_count > 0:
+        ax.scatter(df.loc[df['is_node'], 'time'], df.loc[df['is_node'], 'torus_x'], 
+                   color='red', s=50, label="УЗЕЛ КОМПЕНСАЦИИ", zorder=5)
+    
+    ax.set_title("Паттерн 'Дыхания' Тора")
+    ax.legend()
+    st.pyplot(fig)
+    
+    st.write("Смотри на красные точки. Если они выстроились в ровный ритм — значит "
+             "алгоритм видит структуру. Это и есть твоя 'Альфа-решетка'.")
