@@ -3,60 +3,60 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# 1. ТВОЙ ИНВАРИАНТ С ЧУВСТВИТЕЛЬНОСТЬЮ
+# ФУНКЦИЯ ОЧИСТКИ И ПОИСКА
+def get_clean_data(df, col_idx):
+    # Забираем колонку и чистим от всего, что не число
+    series = df[col_idx].astype(str).str.replace(' ', '')
+    series = pd.to_numeric(series, errors='coerce').dropna().reset_index(drop=True)
+    return series
+
 def detect_nodes(series, window):
-    # Убираем None и переводим в числа
-    s = pd.to_numeric(series, errors='coerce').dropna().reset_index(drop=True)
-    if len(s) < window: return s, pd.Series([False]*len(s))
-    
-    # Сглаживаем, чтобы не считать "шум" за узлы
-    smooth = s.rolling(window=window, center=True).mean()
+    if len(series) < window + 2: 
+        return pd.Series([False] * len(series))
+    # Сглаживание для часовых данных
+    smooth = series.rolling(window=window, center=True).mean()
     d = smooth.diff()
-    nodes = (d.shift(1) * d < 0).fillna(False)
-    return s, nodes
+    return (d.shift(1) * d < 0).fillna(False)
 
-st.set_page_config(page_title="L0-ENGINE: FINAL", layout="wide")
-st.title("🌀 ДВИГАТЕЛЬ L0: РЕАЛЬНЫЙ ПОТОК")
+st.set_page_config(page_title="L0-FIXED", layout="wide")
+st.title("🌀 ДВИГАТЕЛЬ L0: ПРЯМОЙ ДОСТУП")
 
-file = st.file_uploader("ЗАГРУЗИ CSV/TXT ИЗ NASA")
+file = st.file_uploader("ЗАГРУЗИ СВОЙ ФАЙЛ NASA")
 
 if file:
     content = file.getvalue().decode('utf-8')
-    # Ищем блок между $$SOE и $$EOE
-    if "$$SOE" in content:
-        data_block = content.split("$$SOE")[1].split("$$EOE")[0]
-        # Читаем фиксированно: в NASA данные обычно через запятую
-        lines = [l.strip().split(',') for l in data_block.strip().split('\n') if len(l) > 10]
+    
+    # Режем файл жестко по запятым, игнорируя пустые строки
+    lines = [l.split(',') for l in content.splitlines() if len(l.split(',')) > 3]
+    
+    if lines:
         df = pd.DataFrame(lines)
-    else:
-        # Если маркеров нет, берем всё что есть
-        lines = [l.strip().split(',') for l in content.splitlines() if len(l) > 1]
-        df = pd.DataFrame(lines)
-
-    if not df.empty:
-        st.write("ТАБЛИЦА ВОССТАНОВЛЕНА:")
+        st.write("ТАБЛИЦА ПРОЧИТАНА. ПОТОКИ ДОСТУПНЫ:")
         st.dataframe(df.head(5))
         
-        # В NASA за 2026 год (как на скрине) координаты обычно в колонках 2, 3, 4
-        target_idx = st.selectbox("ВЫБЕРИ ПОТОК (Числа)", df.columns, index=min(2, len(df.columns)-1))
+        # Теперь тут будут ВСЕ колонки, которые нашел код
+        col_options = df.columns.tolist()
+        target_col = st.selectbox("ВЫБЕРИ НОМЕР ПОТОКА (Пробуй 2, 3 или 4)", col_options)
         
-        # Слайдер фильтрации шума
-        win = st.slider("МАСШТАБ (Сглаживание)", 1, 100, 24)
+        win = st.slider("МАСШТАБ (Сглаживание)", 1, 100, 12)
         
-        if st.button("▶ ВЫЯВИТЬ СТРУКТУРУ"):
-            clean_series, nodes = detect_nodes(df[target_idx], win)
+        if st.button("▶ ИСКАТЬ УЗЛЫ"):
+            clean_series = get_clean_data(df, target_col)
             
-            st.success(f"НАСТОЯЩИХ УЗЛОВ ВЫЯВЛЕНО: {nodes.sum()}")
-            
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(clean_series.index, clean_series.values, color='#00ffcc', label="Траектория")
-            
-            if nodes.any():
-                ax.scatter(clean_series.index[nodes], clean_series.values[nodes], 
-                           color='red', s=40, label="УЗЕЛ", zorder=5)
-            
-            ax.grid(True, alpha=0.1)
-            ax.legend()
-            st.pyplot(fig)
+            if not clean_series.empty:
+                nodes = detect_nodes(clean_series, win)
+                st.success(f"ПОТОК {target_col}: НАЙДЕНО УЗЛОВ: {nodes.sum()}")
+                
+                fig, ax = plt.subplots(figsize=(10, 5))
+                ax.plot(clean_series.index, clean_series.values, color='#00ffcc')
+                
+                if nodes.any():
+                    ax.scatter(clean_series.index[nodes], clean_series.values[nodes], 
+                               color='red', s=40, zorder=5)
+                
+                ax.grid(True, alpha=0.1)
+                st.pyplot(fig)
+            else:
+                st.error("В этом потоке нет чисел. Выбери другой номер.")
     else:
-        st.error("Файл пустой или не распознан.")
+        st.error("Не удалось разбить файл на колонки. Проверь формат.")
